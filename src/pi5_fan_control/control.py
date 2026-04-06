@@ -1,5 +1,8 @@
 import os
+import shutil
 import glob
+import re
+import tempfile
 
 class FanController:
     def __init__(self):
@@ -9,6 +12,8 @@ class FanController:
         # verify that we have sudo permissions for operations
         if os.geteuid() != 0:
             raise PermissionError("This program requires sudo permissions to run.")
+        
+        self.config_path = '/boot/firmware/config.txt'
     
 
     def _find_hwmon_path(self) -> str:
@@ -67,8 +72,57 @@ class FanController:
         if not all(curve[i]['temp'] < curve[i+1]['temp'] for i in range(len(curve)-1)):
             raise ValueError("Fan curve temperatures must be in ascending order.")
         
-        update_current_fan_curve(curve)
-    
+        #1. Check if a backup of the current config.txt exists, if not create one
+        backup_path = self.config_path + '.bak'
+        if not os.path.exists(backup_path):
+            shutil.copyfile(self.config_path, backup_path)
+
+        #2. Read the current config file 
+        with open(self.config_path, 'r') as f:
+            lines = f.readlines()
+
+        #3. Remove any previously managed block so we do not keep appending duplicates.
+        start_marker = "# --- Pi5 Fan Control Settings ---"
+        end_marker = "# --- End of Pi5 Fan Control Settings ---"
+        new_lines = []
+        in_managed_block = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped == start_marker:
+                in_managed_block = True
+                continue
+            if in_managed_block and stripped == end_marker:
+                in_managed_block = False
+                continue
+            if not in_managed_block:
+                new_lines.append(line)
+
+        #4. Generate a fresh managed block and append it once.
+        if new_lines and not new_lines[-1].endswith("\n"):
+            new_lines[-1] = new_lines[-1] + "\n"
+        new_lines.append(f"\n{start_marker}\n")
+        for i, point in enumerate(curve):
+            temp_millic = int(point['temp'] * 1000)
+            hyst_millic = int(point.get('hyst', 0) * 1000)  # default hysteresis to 0 if not provided
+            speed = point['speed']
+            new_lines.append(f"dtparam=fan_temp{i}={temp_millic}\n")
+            new_lines.append(f"dtparam=fan_speed{i}={speed}\n")
+            if hyst_millic > 0:
+                new_lines.append(f"dtparam=fan_temp{i}_hyst={hyst_millic}\n")
+        new_lines.append(f"{end_marker}\n")
+
+        #5. Perform an atomic write to the config file
+        fd, temp_path = tempfile.mkstemp(dir='/boot/firmware')
+        try:
+            with os.fdopen(fd, 'w') as tmp_file:
+                tmp_file.writelines(new_lines)
+            os.replace(temp_path, self.config_path)  # atomic operation
+            os.chmod(self.config_path, 0o644)  # ensure correct permissions
+        except Exception as e:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise e
+         
     def get_current_fan_curve(self) -> list:
         """Get the current fan curve by reading thermalzone0 trip points."""
         curve = []
@@ -86,22 +140,77 @@ class FanController:
             else:
                 break
         return curve
-
-    def update_current_fan_curve(curve: list) -> None:
-        """
-        Update the current fan curve by writing to thermalzone0 trip points.
-        Note: sysfs only supports updating temps and hysterisis during runtime, not speeds.
-        :param curve: List of dictionaries with 'temp' and 'hysterisis' keys, e.g. [{'temp': 50, 'hyst': 5}, {'temp': 70, 'hyst': 10}]
-                      Speed values can be provided, but they will be ignored.
-        """
+    
+    def get_config_fan_curve(self) -> list:
+        """Get the fan curve defined in the config.txt file."""
+        curve = []
+        with open(self.config_path, 'r') as f:
+            lines = f.readlines()
         
-        for i, (t, h) in enumerate(zip(curve['temp'], curve['hyst'])):
-            temp_path = os.path.join(self.thermal_zone_path, f'trip_point_{i}_temp')
-            hysteresis_path = os.path.join(self.thermal_zone_path, f'trip_point_{i}_hyst')
-            if os.path.exists(temp_path) and os.path.exists(hysteresis_path):
-                with open(temp_path, 'w') as temp_file:
-                    temp_file.write(str(t * 1000))  # convert from degrees to millidegrees
-                with open(hysteresis_path, 'w') as hysteresis_file:
-                    hysteresis_file.write(str(h * 1000))  # convert from degrees to millidegrees
-            else:
-                raise FileNotFoundError(f"temp{i} or hysteresis{i} not found in thermal zone directory.")
+        # Extract lines between the Pi5 Fan Control Settings markers
+        in_block = False
+        for line in lines:
+            if line.strip() == "# --- Pi5 Fan Control Settings ---":
+                in_block = True
+                continue
+            elif line.strip() == "# --- End of Pi5 Fan Control Settings ---":
+                break
+            
+            if in_block:
+                temp_match = re.match(r"^dtparam=fan_temp(\d)=(\d+)", line.strip())
+                speed_match = re.match(r"^dtparam=fan_speed(\d)=(\d+)", line.strip())
+                hyst_match = re.match(r"^dtparam=fan_temp(\d)_hyst=(\d+)", line.strip())
+                
+                if temp_match:
+                    index = int(temp_match.group(1))
+                    temp = int(temp_match.group(2)) / 1000.0  # convert from millidegrees to degrees
+                    while len(curve) <= index:
+                        curve.append({'temp': None, 'speed': None, 'hyst': None})
+                    curve[index]['temp'] = temp
+                elif speed_match:
+                    index = int(speed_match.group(1))
+                    speed = int(speed_match.group(2))
+                    while len(curve) <= index:
+                        curve.append({'temp': None, 'speed': None, 'hyst': None})
+                    curve[index]['speed'] = speed
+                elif hyst_match:
+                    index = int(hyst_match.group(1))
+                    hyst = int(hyst_match.group(2)) / 1000.0  # convert from millidegrees to degrees
+                    while len(curve) <= index:
+                        curve.append({'temp': None, 'speed': None, 'hyst': None})
+                    curve[index]['hyst'] = hyst
+        return curve
+
+    def clear_config_fan_curve(self) -> None:
+        """Remove any managed fan curve settings from the config.txt file."""
+        #1. Read the current config file 
+        with open(self.config_path, 'r') as f:
+            lines = f.readlines()
+
+        #2. Remove any previously managed block so we do not keep appending duplicates.
+        start_marker = "# --- Pi5 Fan Control Settings ---"
+        end_marker = "# --- End of Pi5 Fan Control Settings ---"
+        new_lines = []
+        in_managed_block = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped == start_marker:
+                in_managed_block = True
+                continue
+            elif stripped == end_marker:
+                in_managed_block = False
+                continue
+
+            if not in_managed_block:
+                new_lines.append(line)
+        #3. Perform an atomic write to the config file
+        fd, temp_path = tempfile.mkstemp(dir='/boot/firmware')
+        try:
+            with os.fdopen(fd, 'w') as tmp_file:
+                tmp_file.writelines(new_lines)
+            os.replace(temp_path, self.config_path)  # atomic operation
+            os.chmod(self.config_path, 0o644)  # ensure correct permissions
+        except Exception as e:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise e 

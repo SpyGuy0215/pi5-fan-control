@@ -44,19 +44,36 @@ def test_get_current_fan_curve() -> None:
     assert isinstance(curr_curve, list)
     assert all(isinstance(point, dict) and len(point) == 2 for point in curr_curve)
 
-def test_update_current_fan_curve() -> None:
+def test_get_config_fan_curve() -> None:
     controller = FanController()
-    try:
-        # get the current values to restore later
-        old_fan_curve = controller.get_current_fan_curve()[1:]  # skip the first point (critical shutdown temp)
+    config_curve = controller.get_config_fan_curve()
+    print(f"Config fan curve: {config_curve}")
+    assert isinstance(config_curve, list)
+    assert len(config_curve) >= 0
+    assert all(isinstance(point, dict) and len(point) == 3 for point in config_curve)
 
-        new_fan_curve = [{"temp": 30, "hyst": 0}, {"temp": 50, "hyst": 5}, {"temp": 70, "hyst": 3}, {"temp": 90, "hyst": 15}]
-        controller.update_current_fan_curve(new_fan_curve)
-        # check that the fan curve was updated
-        updated_curve = controller.get_current_fan_curve()
-        assert updated_curve[1:] == new_fan_curve  # skip the first point (critical shutdown temp)
+def test_update_fan_curve() -> None:
+    controller = FanController()
+    old_curve = controller.get_config_fan_curve()
+    new_curve = [
+        {"temp": 40, "speed": 20, "hyst": 5},
+        {"temp": 50, "speed": 40, "hyst": 10},
+        {"temp": 65, "speed": 60, "hyst": 15},
+        {"temp": 80, "speed": 80, "hyst": 20},
+    ]
+    controller.update_fan_curve(new_curve)
+    # After updating the fan curve, we can check if the current fan curve matches the new curve
+    curr_curve = controller.get_config_fan_curve()
+    assert curr_curve == new_curve
 
-        # restore the old fan curve
-        controller.update_current_fan_curve(old_fan_curve)
-    except Exception as e:
-        assert False, f"update_fan_curve raised an exception: {e}"
+    # Restore the original curve after the test
+    controller.update_fan_curve(old_curve)
+
+def test_clear_config() -> None:
+    controller = FanController()
+    old_curve = controller.get_config_fan_curve()
+    controller.clear_config_fan_curve()
+    cleared_curve = controller.get_config_fan_curve()
+    assert cleared_curve == []
+    # Restore the original curve after the test
+    controller.update_fan_curve(old_curve)
