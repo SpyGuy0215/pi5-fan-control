@@ -214,3 +214,15 @@ class FanController:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             raise e 
+
+    def fan_off(self) -> None:
+        """Immediately turn the fan off with pinctrl"""
+        os.system("pinctrl FAN_PWM op dh")
+    
+    def fan_max(self) -> None:
+        """Immediately turn the fan on at max speed with pinctrl"""
+        os.system("pinctrl FAN_PWM op dl")
+    
+    def fan_auto(self):
+        """Set the fan back to automatic control with pinctrl"""
+        os.system("pinctrl FAN_PWM op a0")

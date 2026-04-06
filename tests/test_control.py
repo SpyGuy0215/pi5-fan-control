@@ -1,5 +1,6 @@
 from pi5_fan_control.control import FanController
 import os
+from time import sleep
 
 def test_find_hwmon_path() -> None:
     controller = FanController()
@@ -77,3 +78,19 @@ def test_clear_config() -> None:
     assert cleared_curve == []
     # Restore the original curve after the test
     controller.update_fan_curve(old_curve)
+
+def test_manual_fan_control() -> None:
+    controller = FanController()
+
+    # Set speed to 0
+    controller.fan_off()
+    sleep(1)
+    assert controller.get_fan_speed() <= 100
+
+    # Set speed to max
+    controller.fan_max()
+    sleep(1)
+    assert controller.get_fan_speed() >= 7000
+
+    # give back manual control
+    controller.fan_auto()
