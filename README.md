@@ -8,7 +8,7 @@ You will need a fan, like the official case fan or the Active Cooler fan, plugge
 ## Installation 
 This library is available in PyPi. Simply install the library: 
 ```bash
-pip install pi5_fan_control
+pip install pi5-fan-control
 ```
 
 ## Getting Started

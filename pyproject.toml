@@ -9,6 +9,9 @@ authors=[{name="Shashank Prasanna", email="shashankprasanna1@gmail.com"}]
 keywords=["raspberry-pi", "fan", "hardware", "config"]
 dependencies = []
 
+[project.urls]
+Homepage="https://github.com/SpyGuy0215/pi5-fan-control"
+
 [build-system]
 requires = ["uv_build>=0.11.2,<0.12.0"]
 build-backend = "uv_build"
