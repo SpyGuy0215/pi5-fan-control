@@ -1,9 +1,12 @@
 [project]
 name = "pi5-fan-control"
 version = "0.1.0"
-description = "Add your description here"
+description = "Control the Raspberry Pi 5's fan curve"
 readme = "README.md"
 requires-python = ">=3.13"
+license={text="MIT"}
+authors=[{name="Shashank Prasanna", email="shashankprasanna1@gmail.com"}]
+keywords=["raspberry-pi", "fan", "hardware", "config"]
 dependencies = []
 
 [build-system]
